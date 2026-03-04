@@ -1,0 +1,57 @@
+#NEXUS
+
+
+BEGIN TAXA;
+	TITLE Taxa;
+	DIMENSIONS NTAX=36;
+	TAXLABELS
+		Piranga_olivacea Cardinalis_cardinalis Setophaga_coronata Quiscalus_mexicanus Passer_domesticus Mimus_polyglottos Sitta_canadensis Bombycilla_cedrorum Progne_subis Cyanocitta_cristata Contopus_virens Melopsittacus_undulatus Eclectus_roratus Amazona_viridigenalis Myiopsitta_monachus Psittacara_holochlorus Falco_peregrinus Falco_columbarius Falco_sparverius Caracara_plancus Astur_cooperii Tyto_alba Melanerpes_aurifrons Oreotrochilus_chimborazo Ardea_herodias Nannopterum_auritum Fulica_americana Zenaida_asiatica Aythya_americana Struthio_camelus Quiscalus_mexicanus_2 Caracara_plancus_2 Melopsittacus_undulatus_2 Myiopsitta_monachus_2 Psittacara_holochlorus_2 Cardinalis_cardinalis_2 
+	;
+END;
+
+
+begin TREES;
+
+	TRANSLATE
+		1 Piranga_olivacea,
+		2 Cardinalis_cardinalis,
+		3 Setophaga_coronata,
+		4 Quiscalus_mexicanus,
+		5 Passer_domesticus,
+		6 Mimus_polyglottos,
+		7 Sitta_canadensis,
+		8 Bombycilla_cedrorum,
+		9 Progne_subis,
+		10 Cyanocitta_cristata,
+		11 Contopus_virens,
+		12 Melopsittacus_undulatus,
+		13 Eclectus_roratus,
+		14 Amazona_viridigenalis,
+		15 Myiopsitta_monachus,
+		16 Psittacara_holochlorus,
+		17 Falco_peregrinus,
+		18 Falco_columbarius,
+		19 Falco_sparverius,
+		20 Caracara_plancus,
+		21 Astur_cooperii,
+		22 Tyto_alba,
+		23 Melanerpes_aurifrons,
+		24 Oreotrochilus_chimborazo,
+		25 Ardea_herodias,
+		26 Nannopterum_auritum,
+		27 Fulica_americana,
+		28 Zenaida_asiatica,
+		29 Aythya_americana,
+		30 Struthio_camelus,
+		31 Quiscalus_mexicanus_2,
+		32 Caracara_plancus_2,
+		33 Melopsittacus_undulatus_2,
+		34 Myiopsitta_monachus_2,
+		35 Psittacara_holochlorus_2,
+		36 Cardinalis_cardinalis_2;
+
+
+	TREE 'UNTITLED+' = (30:103.000005,(29:88.00023,(28:68.125164,((27:64.486266,(24:63.604894,(25:58.752556,26:58.752558)mrcaott9830ott55044:4.852334)mrcaott5481ott9830:0.881372)mrcaott5272ott5481:2.094078,((23:63.811806,(21:62.363666,22:62.363668)mrcaott1858ott2907:1.448137)mrcaott1858ott6895:1.046775,(((20:0.5,32:0.5):26.231938,(19:8.599448,(17:6.158753,18:6.158753)mrcaott47588ott352517:2.440694)mrcaott47588ott201377:18.132491)mrcaott47588ott225286:33.077294,((((12:0.5,33:0.5):20.289177,13:20.789176)mrcaott7113ott7116:4.052921,((16:0.5,35:0.5):18.196035,(14:18.033484,(34:0.5,15:0.5):17.533483)mrcaott165400ott183230:0.662552)mrcaott33330ott165400:6.146061)mrcaott7113ott33330:31.74958,(11:47.306154,(10:28.805533,(9:22.886969,((8:20.160616,(6:19.535565,7:19.535564)mrcaott246ott1566:0.625051)mrcaott246ott5934:0.406703,(5:15.422669,((1:8.259654,(36:0.5,2:0.5):7.759655)mrcaott23957ott69804:3.469534,(3:10.715568,(31:0.5,4:0.5):10.215571)mrcaott5620ott29804:1.013618)mrcaott4088ott5616:3.693484)mrcaott4088ott8371:5.144647)mrcaott246ott3364:2.319652)mrcaott246ott1488:5.918562)mrcaott246ott4820:18.50062)mrcaott246ott3212:9.285525)mrcaott246ott7113:3.217554)mrcaott246ott47588:5.049348)mrcaott246ott1858:1.721765)mrcaott246ott5272:1.54482)mrcaott246ott5021:19.875068)ott241846:14.999773)ott81461;
+end;
+
+

@@ -1,0 +1,1351 @@
+---
+title: "Eufalconimorph_project"
+author: "Lucas Legendre"
+date: "`r Sys.Date()`"
+output:  html_document:
+     toc: true
+     toc_float:
+      collapsed: false
+      smooth_scroll: false
+     df_print: paged
+editor_options: 
+  chunk_output_type: inline
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Compiled under R version 4.5.2 (2025-10-31)
+
+<b>WARNING</b>: edit the working directory to your preferred folder.
+
+This document details all analyses performed in R for the study:
+
+For more information regarding the study, datasets, and analyses, please refer to the Main Text and Supplementary Information of this paper. If you have any additional questions, feel free to email me at [lucasjlegendre\@gmail.com](mailto:lucasjlegendre@gmail.com){.email}.
+
+All references cited in this script for packages, as well as additional details on my protocol and workflow, are available in the Material and Methods section of this paper.
+
+### Loading packages
+```{r, message = FALSE}
+library(tidyverse)
+library(ape)
+library(nlme)
+library(rr2)
+library(phylolm)
+library(phytools)
+library(evobiR)
+library(geiger)
+library(windex)
+library(Rphylopars)
+library(RColorBrewer)
+library(l1ou)
+library(PhylogeneticEM)
+library(readxl)
+library(ggtree)
+library(COINr)
+library(MuMIn)
+```
+
+## Data and tree
+
+-   Data
+```{r}
+data<-read.csv("Euf_data.csv", header=TRUE, sep=";")
+
+# Rename duplicate species
+species2<-data$Species
+for (i in 2:nrow(data)) {
+  if (data$Species[i] == data$Species[i-1]) {
+    species2[i]<-paste(species2[i],"2", sep="_")
+  }
+}
+
+data[,1]<-species2
+rownames(data)<-data$Species
+```
+
+-   Tree
+```{r, message=FALSE}
+tree<-read.nexus("euf_tree.trees.nex")
+tree$node.label<-NULL
+tree<-force.ultrametric(tree)
+plotTree(tree)
+setdiff(tree$tip.label, data$Species) # perfect match
+
+# Reorder data
+data<-ReorderData(tree, data)
+```
+
+## Preliminary analyses
+
+-   Log-conversion
+```{r}
+logdata<-cbind(data[,c(1:4)],log(data[,c(5:15)]))
+```
+
+- Impute missing values with `Rphylopars` (Goolsby et al., 2017)
+```{r, warning=FALSE}
+# Data
+parsdata<-logdata[,c(1,5,6,8,10)]
+colnames(parsdata)[1]<-"species"
+
+# Imputation
+modelpars<-c("BM", "OU", "lambda", "EB", "star") # Evolutionary models
+PPE<-list(); BICdat<-data.frame()
+for (i in 1:length(modelpars)) {
+  PPE[[i]]<-phylopars(trait_data = parsdata, tree = tree, model=modelpars[i])
+  BICdat[i,1]<-BIC(PPE[[i]]) # BIC to compare models
+}
+
+rownames(BICdat)<-modelpars; colnames(BICdat)<-"BIC"
+BICdat # The lambda model is the best fit
+```
+
+
+-   Extract estimates and add them to the dataset
+(Note: no estimates for measurements of intrinsic muscles – 'NA' in this case refers to non-applicable, rather than missing, values)
+```{r}
+Cdata<-cbind(logdata[,1:4], PPE[[3]]$anc_recon[1:36,1:2], logdata[,7],
+            PPE[[3]]$anc_recon[1:36,3], logdata[,9],
+            PPE[[3]]$anc_recon[1:36,4], logdata[,11:15])
+colnames(Cdata)<-colnames(logdata)
+logdata<-Cdata
+logdata[24,10]<-NA # Remove the imputed value of ST CSA for O. chimborazo (hummingbirds don't have an ST)
+
+# Add tracheal elongation ratio (TER) as an extra trait
+TER<-log(exp(logdata$Tracheal_length)/(exp(logdata$Bronchial_length)+exp(logdata$Tracheal_length)))
+logdata<-cbind(logdata[,1:14], TER, logdata[,15]); colnames(logdata)[16]<-"Bodymass"
+```
+
+-   Body mass ratios for all traits
+```{r}
+massCdata<-data
+for (i in c(5:15)) {
+  massCdata[,i]<-log1p(data[,i]/data$Bodymass)
+} # log1p to avoid negative values
+
+TERm<-log1p(expm1(logdata$Tracheal_length)/(expm1(logdata$Bronchial_length)+expm1(logdata$Tracheal_length))/expm1(logdata$Bodymass)) # Add TER
+massCdata<-cbind(massCdata[,1:14], TERm, massCdata[,15])
+massCdata<-massCdata[,-16] # Remove body mass
+
+# Impute missing values
+# Data
+Mparsdata<-massCdata[,c(1,5,6,8,10)]
+colnames(Mparsdata)[1]<-"species"
+
+# Imputation
+modelpars<-c("BM", "OU", "lambda", "EB", "star") # Evolutionary models
+PPEM<-list(); BICdatM<-data.frame()
+for (i in 1:length(modelpars)) {
+  PPEM[[i]]<-phylopars(trait_data = Mparsdata, tree = tree, model=modelpars[i])
+  BICdatM[i,1]<-BIC(PPEM[[i]]) # BIC to compare models
+}
+rownames(BICdatM)<-modelpars; colnames(BICdatM)<-"BIC"
+BICdatM # The lambda model is the best fit
+
+Cmdata<-cbind(massCdata[,1:4], PPEM[[3]]$anc_recon[1:36,1:2], massCdata[,7],
+            PPEM[[3]]$anc_recon[1:36,3], massCdata[,9],
+            PPEM[[3]]$anc_recon[1:36,4], massCdata[,11:15])
+colnames(Cmdata)<-c(colnames(massCdata)[1:15])
+massCdata<-Cmdata
+massCdata[24,10]<-NA
+```
+
+-   Phenograms (for all traits)
+```{r}
+# For traits
+for (i in 5:ncol(logdata)) {
+  trait<-logdata[,i]; names(trait)<-rownames(logdata)
+  trait<-na.omit(trait)
+  treena<-drop.tip(tree, setdiff(tree$tip.label, names(trait)))
+  phenogram(treena, trait, ,ftype="i", spread.labels=TRUE,
+    spread.cost=c(1,0),fsize=0.7,color=palette()[4],
+    xlab="Time (Ma)",ylab=paste("log",colnames(logdata)[i]),cex.axis=0.8,
+    axes=FALSE,las=1, lwd=1)
+  axis(1,at=round(seq(0,max(nodeHeights(treena)),length.out=6),1),
+    label=round(seq(max(nodeHeights(treena)),0,length.out=6),1),
+    cex.axis=0.8)
+  axis(2,las=1,cex.axis=0.8)
+  grid()
+  title(paste(colnames(logdata[i])))
+}
+
+# For ratios
+for (i in 5:ncol(massCdata)) {
+  trait<-massCdata[,i]; names(trait)<-rownames(massCdata)
+  trait<-na.omit(trait)
+  treena<-drop.tip(tree, setdiff(tree$tip.label, names(trait)))
+  phenogram(treena, trait, ,ftype="i", spread.labels=TRUE,
+    fsize=0.7,color=palette()[4],
+    xlab="Time (Ma)",ylab=paste("log",colnames(massCdata)[i],"/ body mass"),cex.axis=0.8,
+    axes=FALSE,las=1, lwd=1)
+  axis(1,at=round(seq(0,max(nodeHeights(treena)),length.out=6),1),
+    label=round(seq(max(nodeHeights(treena)),0,length.out=6),1),
+    cex.axis=0.8)
+  axis(2,las=1,cex.axis=0.8)
+  grid()
+  title(paste(colnames(massCdata[i]), "/ body mass"))
+}
+```
+
+-   Evolutionary model (for all traits) in `geiger` (Pennell et al., 2014)
+```{r, warning=FALSE}
+### Phylogenetic signal (Pagel's lambda)
+var=list(); phy=list(); phydat=data.frame()
+for (i in 5:16) {
+  var<-logdata[,i]; names(var)<-rownames(logdata)
+  var2<-var[!is.na(var)]
+  treevar<-drop.tip(tree,setdiff(tree$tip.label,names(var2)))
+  phy[[i]]<-phylosig(treevar, var2, method="lambda", test=TRUE)
+  phydat[i,1]<-colnames(logdata)[i]; phydat[i,2]<-phy[[i]]$lambda; phydat[i,3]<-phy[[i]]$P
+}
+colnames(phydat)<-c("Variable", "Lambda", "P")
+phydat[c(5:16),]
+
+### Checking evolutionary model with fitContinuous
+models=c("BM", "OU", "EB", "rate_trend","lambda", "white") # (For more info, check '?fitContinuous')
+
+var=list(); fit=list(); mod=list()
+for (i in 5:16) {
+  var<-logdata[,i]; names(var)<-rownames(logdata)
+  var2<-var[!is.na(var)]
+  treevar<-drop.tip(tree,setdiff(tree$tip.label,names(var2)))
+  for (m in 1:length(models)) {
+    fit[[m]]=fitContinuous(treevar, var2, model=models[m], ncores=2)
+  }
+  mod[[i]]<-modSel.geiger(fit[[1]],fit[[2]],fit[[3]],fit[[4]],fit[[5]],fit[[6]])
+}
+mod
+```
+High phylogenetic signal (lambda ≥ 0.75) for all variables. Phylogenetic signal is significant (p < 0.05) for all of them except SS CSA. 
+ 
+Best evolutionary model is: 
+- a lambda model for bronchial length, TL CSA, ST CSA, labia length, LL CSA, and TER;
+- a Brownian Motion (BM) model for tracheal length, tracheal diameter, SP CSA, and body mass;
+- an Ornstein-Uhlenbeck (OU) model for bronchial diameter and SS CSA;
+
+-   Same with ratios
+```{r, warning=FALSE}
+var=list(); phy=list(); phydat=data.frame()
+for (i in 5:15) {
+  var<-massCdata[,i]; names(var)<-rownames(massCdata)
+  var2<-var[!is.na(var)]
+  treevar<-drop.tip(tree,setdiff(tree$tip.label,names(var2)))
+  phy[[i]]<-phylosig(treevar, var2, method="lambda", test=TRUE)
+  phydat[i,1]<-paste(colnames(massCdata)[i], "/ body mass"); phydat[i,2]<-phy[[i]]$lambda; phydat[i,3]<-phy[[i]]$P
+}
+colnames(phydat)<-c("Variable", "Lambda", "P")
+phydat[c(5:15),]
+
+### Checking evolutionary model with fitContinuous
+models=c("BM", "OU", "EB", "rate_trend","lambda", "white") # (For more info, check '?fitContinuous')
+
+var=list(); fit=list(); mod=list()
+for (i in 5:15) {
+  var<-massCdata[,i]; names(var)<-rownames(massCdata)
+  var2<-var[!is.na(var)]
+  treevar<-drop.tip(tree,setdiff(tree$tip.label,names(var2)))
+  for (m in 1:length(models)) {
+    fit[[m]]=fitContinuous(treevar, var2, model=models[m], ncores=2)
+  }
+  mod[[i]]<-modSel.geiger(fit[[1]],fit[[2]],fit[[3]],fit[[4]],fit[[5]],fit[[6]])
+}
+mod
+```
+Phylogenetic signal is high (lambda ≥ 0.75), except for LL CSA (lambda = 0.64). It is significant (p < 0.05) for all ratios. 
+Best evolutionary model is: 
+- a lambda model for ratios of bronchial length, TL CSA, ST CSA, labia length, and LL CSA; 
+- a BM model for ratios of tracheal length, tracheal diameter, and bronchial diameter; 
+- an OU model for ratios of SS CSA, SP CSA, and TER.
+
+-   Ancestral State Reconstruction (using Brownian Motion – a good model for all traits except SS CSA and bronchial diameter) in `phytools` (Revell, 2024)
+```{r}
+pal<-c("yellow1","orange1","orangered3","purple4")
+dataplot=list(); fit=list(); obj=list()
+for (i in c(5:16)) {
+  dataplot[[i]]<-logdata[,i]; names(dataplot[[i]])<-rownames(logdata)
+  dataplot[[i]]<-na.omit(dataplot[[i]])
+  treeplot<-drop.tip(tree, setdiff(tree$tip.label, names(dataplot[[i]])))
+  fit[[i]]<-fastAnc(treeplot, dataplot[[i]], vars=TRUE, CI=TRUE)
+  obj[[i]]<-setMap(contMap(treeplot, dataplot[[i]], plot=FALSE),
+                   colors=pal)
+  plot(obj[[i]])
+  title(paste('Ancestral state reconstruction for', colnames(logdata)[i]))
+}
+```
+Possible shifts in Passeriformes (tracheal length and diameter, bronchial diameter, TL CSA, ST CSA, SS CSA), in Psittacopasseres (bronchial length), in Passeri (SP CSA), in Psittaciformes (LL CSA), in both Psittacopasseres and Passeriformes (body mass), and in both Passeriformes and Falconinae (labia length). TER does not show any conspicuous pattern.
+
+-   Ancestral State Reconstruction for ratios (using Brownian Motion – a good model for all traits except SS CSA, SP CSA, and TER)
+```{r}
+dataplot=list(); fit=list(); obj=list()
+for (i in c(5:15)) {
+  dataplot[[i]]<-massCdata[,i]; names(dataplot[[i]])<-rownames(massCdata)
+  dataplot[[i]]<-na.omit(dataplot[[i]])
+  treeplot<-drop.tip(tree, setdiff(tree$tip.label, names(dataplot[[i]])))
+  fit[[i]]<-fastAnc(treeplot, dataplot[[i]], vars=TRUE, CI=TRUE)
+  obj[[i]]<-setMap(contMap(treeplot, dataplot[[i]], plot=FALSE),
+                   colors=pal)
+  plot(obj[[i]])
+  title(paste('Ancestral state reconstruction for', colnames(massCdata)[i], "/ body mass"))
+}
+```
+Less clear than for individual traits; possibles shifts in Passeriformes (tracheal and bronchial length, tracheal and bronchial diameter, TER), Psittacopasseres (TL CSA), both Psittaciformes and Passeriformes (LL CSA), but the pattern is less conspicuous for all ratios. **One shift seems to be very conspicuous**: a higher ratio of labia length for Passeriformes.
+
+-   Boxplots by order for all traits
+```{r}
+# For individual traits
+## Subset eufalconimorphs
+eufalc<-logdata %>% filter(Order=="Passeriformes"|
+                             Order=="Psittaciformes"|
+                             Order=="Falconiformes")
+eufalctree<-drop.tip(tree, setdiff(tree$tip.label, eufalc$Species))
+
+## Plot
+for (i in 5:16) {
+  print(ggplot(eufalc, aes(x=Order, y=eufalc[,i], fill=Order)) +
+  geom_boxplot() +
+  #geom_jitter(shape=16, position=position_jitter(0.2)) +
+  scale_fill_brewer(palette="Accent") +
+  ylab(colnames(eufalc)[i]) +
+  ggtitle(paste("Distribution of", colnames(eufalc)[i], "per order")))
+}
+
+# For ratios
+## Subset eufalconimorphs
+eufalcmass<-massCdata %>% filter(Order=="Passeriformes"|
+                             Order=="Psittaciformes"|
+                             Order=="Falconiformes")
+
+for (i in 5:15) {
+  print(ggplot(eufalcmass, aes(x=Order, y=eufalcmass[,i], fill=Order)) +
+  geom_boxplot() +
+  #geom_jitter(shape=16, position=position_jitter(0.2)) +
+  scale_fill_brewer(palette="Accent") +
+  ylab(paste(colnames(eufalcmass)[i], "/ body mass")) +
+  ggtitle(paste("Distribution of", colnames(eufalcmass)[i], "/ body mass per order")))
+}
+```
+There seems to be some differences – let's test for it...
+
+- Phylogenetic ANOVA for three orders within Eufalconimorpha
+```{r, warning=FALSE}
+# For individual traits
+datanova=list(); treenova=list(); phylanov=list()
+for (i in 5:16) {
+  datanova[[i]]<-eufalc[,i]; names(datanova[[i]])<-rownames(eufalc)
+  datanova[[i]]<-na.omit(datanova[[i]])
+  treenova[[i]]<-drop.tip(tree, setdiff(tree$tip.label, names(datanova[[i]])))
+  phylanov[[i]]<-phylANOVA(treenova[[i]], as.factor(eufalc$Order), datanova[[i]], p.adj="BH")
+}
+phylanov
+
+# For ratios
+datanovamass=list(); treenovamass=list(); phylanovmass=list()
+for (i in 5:15) {
+  datanovamass[[i]]<-eufalcmass[,i]; names(datanovamass[[i]])<-rownames(eufalcmass)
+  datanovamass[[i]]<-na.omit(datanovamass[[i]])
+  treenovamass[[i]]<-drop.tip(tree, setdiff(tree$tip.label, names(datanovamass[[i]])))
+  phylanovmass[[i]]<-phylANOVA(treenovamass[[i]], eufalcmass$Order, datanovamass[[i]],
+                               p.adj="BH")
+}
+phylanovmass
+```
+None of the variables show any significant differences between orders.
+
+## Test for shifts in syringeal traits
+
+Using an OU model in `l1ou` (Khabbazian et al., 2016; see also Zhang et al., 2024).
+
+-   Analyses performed for all traits at once
+```{r, message=FALSE}
+eModel=list()
+for (i in c(5:16)) {
+  trait<-logdata[,i]; names(trait)<-rownames(logdata)
+  trait<-na.omit(trait)
+  treena<-drop.tip(tree, setdiff(tree$tip.label, names(trait)))
+  OUdat<-adjust_data(treena, trait)
+  eModel[[i]]<-estimate_shift_configuration(OUdat$tree, OUdat$Y, 
+                                            criterion="pBIC",
+                                            root.model="OUfixedRoot")
+  nEdges <- Nedge(treena)
+  ew <- rep(1,nEdges)
+  ew[eModel[[i]]$shift.configuration] <- 3
+  plot(eModel[[i]], cex=0.5, label.offset=0.02, edge.width=ew,
+       main=paste("Shift scores for", colnames(logdata[i]), sep=" "))
+}
+
+## Print list of shifts for each model and plot the shifts on the tree
+par(mfrow=c(1,1))
+for (i in c(5:16)) {
+      model.profile<-profile(eModel[[i]])
+      plot(model.profile$nShifts, model.profile$scores, 
+           main=paste("Shift scores for", colnames(logdata[i]), sep=" "))
+      print(paste(colnames(logdata)[i], ": ",
+                  eModel[[i]]$shift.configuration))
+}
+```
+We have significant shifts for bronchial length, TL CSA, ST CSA, labia length, LL CSA, SP CSA, and TER. Among these, the shifts for SP CSA and TER are *autapomorphic*.
+
+Other shifts indicate a trend for major clades: 
+- Bronchial length: **significant decrease in Psittacopasseres**
+- TL CSA: **significant decrease in Passeriformes** 
+- ST CSA: **significant decrease in Passeriformes** 
+- Labia length: **significant decrease in Neoaves**, with a **subsequent increase in Pelecaniformes** (*Nannopterum auritum* + *Ardea herodias*) and a **subsequent further decrease in Arinae** (*Psittacara*, *Amazona*, and *Myiopsitta*)
+- LL CSA: **significant decrease in Neoaves** and **subsequent increase in Pelecaniformes** (*Nannopterum auritum* + *Ardea herodias*)
+
+- Same with ratios
+```{r, message=FALSE}
+eModel=list()
+for (i in c(5:15)) {
+  trait<-massCdata[,i]; names(trait)<-rownames(massCdata)
+  trait<-na.omit(trait)
+  treena<-drop.tip(tree, setdiff(tree$tip.label, names(trait)))
+  OUdat<-adjust_data(treena, trait)
+  eModel[[i]]<-estimate_shift_configuration(OUdat$tree, OUdat$Y, 
+                                            criterion="pBIC",
+                                            root.model="OUfixedRoot")
+  nEdges <- Nedge(treena)
+  ew <- rep(1,nEdges)
+  ew[eModel[[i]]$shift.configuration] <- 3
+  plot(eModel[[i]], cex=0.5, label.offset=0.02, edge.width=ew,
+       main=paste("Shift scores for",colnames(logdata[i]), "/ Body mass", sep=" "))
+}
+
+## Print list of shifts for each model and plot the shifts on the tree
+par(mfrow=c(1,1))
+for (i in c(5:15)) {
+      model.profile<-profile(eModel[[i]])
+      plot(model.profile$nShifts, model.profile$scores,
+           main=paste("Shift scores for", colnames(massCdata[i]), sep=" "))
+      print(paste(colnames(massCdata)[i], ": ", eModel[[i]]$shift.configuration))
+}
+```
+We have significant shifts for ratios of TL CSA, ST CSA, labia length, LL CSA, SS CSA, and TER. Among these, the shifts for ratios of TL CSA and SS CSA are *autapomorphic*.
+
+Other shifts indicate a trend for major clades:
+- Ratio of ST CSA / body mass: **significant increase in Neoaves** and **subsequent decrease in Gruimorphae**
+- Ratio of labia length / body mass: **significant increase in Passeriformes**
+- Ratio of LL CSA / body mass: **significant increase in Passeriformes**
+- Ratio of TER / body mass: **significant increase in (Passeroidea + Muscicapoidea)**
+
+We can study this further by exploring multivariate OU shifts with package `PhylogeneticEM` (Bastide et al., 2017, 2018).
+
+- Dimensionality reduction, using phylogenetic PCA in `phytools`
+```{r}
+dataOU<-logdata[-24,-c(1:4,13:14)] # Remove specimen info and traits with missing values
+
+PCAdat<-phyl.pca(tree, dataOU)
+
+# Proportion of variance explained by each PC
+PCAvar<-as.data.frame(diag(PCAdat$Eval)/sum(PCAdat$Eval)*100)
+PCAvar<-cbind(rownames(PCAvar), PCAvar); colnames(PCAvar)<-c("PC", "value")
+PCAvar
+PCAvar$PC<-factor(PCAvar$PC, levels=rownames(PCAvar)) # Correct order for the PCs
+ggplot(PCAvar, aes(PC, value)) + geom_bar(stat="identity")
+PCAfull<-as.data.frame(PCAdat$S)
+ggplot(PCAfull, aes(PC1, PC2)) + 
+  geom_point() +
+  geom_text(label=rownames(PCAfull),
+    nudge_x = 0.25, nudge_y = 0.25, 
+    check_overlap = T)
+
+# Check correlation between body mass and PC1
+PCs<-PCAfull[,c(1,2)]
+BMlog<-as.data.frame(logdata$Bodymass); rownames(BMlog)<-rownames(logdata)
+BMlog<-BMlog[-24,,FALSE] # Remove extra row for hummingbird
+BMPC<-cbind(PCs, BMlog); colnames(BMPC)<-c("PC1", "PC2", "Body_mass")
+treePC<-drop.tip(tree, setdiff(tree$tip.label, rownames(BMPC)))
+## PGLS with PC1
+BMPC1<-gls(PC1~Body_mass, BMPC, 
+               correlation=corPagel(1, phy=treePC, form=~1), method="ML")
+summary(BMPC1); R2_pred(BMPC1)
+ggplot(BMPC, aes(Body_mass, PC1)) +
+  geom_point(size=5) +
+  geom_text(aes(label=rownames(BMPC)),hjust=-0.1, vjust=0.4) +
+  xlab("ln body mass (g)") +
+  ylab("PC1") +
+  geom_abline(intercept=BMPC1$coefficients[1], slope=BMPC1$coefficients[2],
+              linewidth=1.3) +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=17))
+## PGLS with PC2
+BMPC2<-gls(PC2~Body_mass, BMPC, 
+               correlation=corPagel(1, phy=treePC, form=~1), method="ML")
+summary(BMPC2); R2_pred(BMPC2)
+ggplot(BMPC, aes(Body_mass, PC2)) +
+  geom_point(size=5) +
+  geom_text(aes(label=rownames(BMPC)),hjust=-0.1, vjust=0.4) +
+  xlab("ln body mass (g)") +
+  ylab("PC2") +
+  geom_abline(intercept=BMPC2$coefficients[1], slope=BMPC2$coefficients[2],
+              linewidth=1.3) +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=17))
+```
+The first two PCs explain 87% of the variance in the original dataset. PC1 is highly correlated to body mass.
+
+- Estimate the shifts in the PCs and visualize them on the tree
+```{r, message =FALSE}
+PCAdatviz<-as.data.frame(t(PCAdat$S[,c(1:2)]))
+
+max(abs(sqrt(nrow(logdata))), 10) # Maximum number of shifts (here, 10)
+
+treePCA<-drop.tip(tree, setdiff(tree$tip.label, rownames(dataOU)))
+
+res <- PhyloEM(phylo = treePCA,
+               Y_data = PCAdatviz,
+               process = "scOU",   
+               random.root = TRUE,
+               stationary.root = TRUE,
+               nbr_alpha = 100,
+               K_max = 10,
+               parallel_alpha = TRUE,
+               Ncores = 4)
+res
+
+# Plot
+plot(res) # Shifts on the tree
+plot_criterion(res) # model selection criterion: one shift is the best model
+```
+**One shift** for Passeriformes, similar to what is obtained with TL CSA and ST CSA, and with mass-corrected labia length and LL CSA (also see ASR above).
+
+This is an interesting result, but how does it vary (or not) if we include traits for intrinsic muscles? We did not include them due to NAs for non-Psittacopasseres and *Contopus*.
+
+Let's rerun the analysis with all traits, but only for songbirds and parrots:
+
+- Phylogenetic PCA
+```{r}
+dataOUall<-na.omit(logdata[,-c(1:4)]) # Remove specimen info
+treeIM<-drop.tip(tree, setdiff(tree$tip.label, rownames(dataOUall))) # Prune the tree
+
+PCAdatall<-phyl.pca(treeIM, dataOUall)
+
+# Proportion of variance explained by each PC
+PCAvarall<-as.data.frame(diag(PCAdatall$Eval)/sum(PCAdatall$Eval)*100)
+PCAvarall<-cbind(rownames(PCAvarall), PCAvarall); colnames(PCAvarall)<-c("PC", "value")
+PCAvarall
+PCAvarall$PC<-factor(PCAvarall$PC, levels=rownames(PCAvarall)) # Correct order for the PCs
+ggplot(PCAvarall, aes(PC, value)) + geom_bar(stat="identity")
+```
+The first two PCs explain ~82% of the variance in the original dataset.
+
+- Estimate the shifts in the PCs and visualize them on the tree
+```{r}
+PCAdatallviz<-as.data.frame(t(PCAdatall$S[,c(1:2)]))
+
+max(abs(sqrt(nrow(dataOUall))), 10) # Maximum number of shifts (here, 10)
+
+resall <- PhyloEM(phylo = treeIM,
+               Y_data = PCAdatallviz,
+               process = "scOU",   
+               random.root = TRUE,
+               stationary.root = TRUE,
+               nbr_alpha = 100,
+               K_max = 10,
+               parallel_alpha = TRUE,
+               Ncores = 4)
+resall
+
+# Plot
+plot(resall) # Shifts on the tree
+plot_criterion(resall) # model selection criterion: no shifts is the best model
+```
+The lack of extra taxa blurs the signal, but it could also be that the IM traits have very little signal as well – a larger sample size for Psittacopasseres might help.
+
+Since there seems to be a major shift in Passeriformes for both labia traits (length and CSA) that this might be related to body mass (significant shifts for ratios), we should investigate the relationship between those traits and body mass a bit further using phylogenetic regressions.
+
+### Relationship between labia traits and body mass using PGLS
+
+Phylogenetic generalized least squares in `phylolm` (Ho & Ané, 2014).
+
+#### For (labia length ~ body mass)
+
+```{r}
+model<-c("BM", "OUrandomRoot", "OUfixedRoot", "lambda", "kappa", "delta", "EB")
+LLmodel<-list()
+for (i in 1:length(model)) {
+  LLmodel[[i]]<-phylolm(LL~Bodymass, logdata, tree, model=paste(model[[i]]))
+}
+mod2<-modSel.phylolm(LLmodel[[1]], LLmodel[[2]], LLmodel[[3]], LLmodel[[4]],
+                     LLmodel[[5]], LLmodel[[6]], LLmodel[[7]], tree=tree,
+                     method="phylolm")
+mod2 # The lambda model shows the best fit
+
+lambdaLL<-LLmodel[[4]]; summary(lambdaLL) 
+```
+Model is highly significant (p < 0.0001), but the pseudo R-squared is pretty low (0.35).
+
+- Same with `ape` (Paradis & Schliep, 2019) and `rr2` (Ives & Li, 2018; Ives, 2019)
+```{r}
+lambdaLL2<-gls(LL~Bodymass, logdata, 
+               correlation=corPagel(1, phy=tree, form=~1), method="ML")
+summary(lambdaLL2)
+R2_pred(lambdaLL2)
+```
+Pseudo R-squared is fairly high (0.71).
+
+- Let's plot it and check the residuals
+```{r}
+# Plot
+dupli<-logdata$Order; dupli[21:30]<-"Other"
+logdata2<-cbind(logdata[,1], dupli, logdata[,3:16])
+colnames(logdata2)[c(1,2)]<-c("Species","Order")
+
+hull <- logdata2[-c(21:30),] %>% group_by(Order) %>% 
+  slice(chull(Bodymass, LL)) # Convex hulls for eufalconimorphs
+
+ggplot(logdata2, aes(Bodymass, LL, color=Order)) +
+  geom_point(size=5) +
+  geom_text(aes(label=Species),hjust=-0.1, vjust=0.4) +
+  xlab("ln body mass (g)") +
+  ylab("ln labia length (µm)") +
+  geom_abline(intercept=lambdaLL$coefficients[1], slope=lambdaLL$coefficients[2],
+              linewidth=1.3) +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=17)) +
+  scale_colour_brewer("Order", palette="Set1") +
+  aes(fill=Order) +
+  geom_polygon(data=hull, alpha=0.5)
+
+# Normality test
+shapiro.test(chol(solve(vcv(tree)))%*%lambdaLL$residuals) # non normal
+
+# Checking the residuals
+res<-residuals(lambdaLL2, type="n")
+plot(lambdaLL2, resid(., type="n")~fitted(.), 
+     main="Normalized Residuals v Fitted Values",abline=c(0,0))
+qqnorm(res); qqline(res)
+
+# Removing the outliers
+logdata2new<-logdata2[-which(logdata$Species=="Struthio_camelus"),]
+colnames(logdata2new)[1]<-"Species"
+treenew<-drop.tip(tree, setdiff(tree$tip.label, logdata2new$Species))
+
+# New PGLS
+## With ape
+lambdaLL2new<-gls(LL~Bodymass, logdata2new, 
+                 correlation=corPagel(1, phy=treenew, form=~1), method="ML") 
+summary(lambdaLL2new)
+R2_pred(lambdaLL2new) # slightly lower
+## With phylolm
+lambdaLLnew<-phylolm(LL~Bodymass, logdata2new, treenew, model="lambda")
+summary(lambdaLLnew) # Higher p-value, but still highly significant
+
+shapiro.test(chol(solve(vcv(treenew)))%*%residuals(lambdaLLnew))
+resnew<-resid(lambdaLL2new, type="n")
+plot(lambdaLL2new, resid(., type="n")~fitted(.), main="Normalized Residuals v Fitted Values",abline=c(0,0)) # Looks better
+qqnorm(resnew); qqline(resnew) # Looks better
+
+# Plot
+ggplot(logdata2new, aes(Bodymass, LL, color=Order)) +
+  geom_point(size=5) +
+  # geom_text(aes(label=Species),hjust=-0.1, vjust=0.4) +
+  xlab("ln body mass (g)") +
+  ylab("ln labia length (µm)") +
+  geom_abline(intercept=lambdaLL2new$coefficients[1],
+              slope=lambdaLL2new$coefficients[2], linewidth=1.3) +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=17)) +
+  scale_colour_brewer("Order", palette="Set1") +
+  aes(fill=Order) +
+  geom_polygon(data=hull, alpha=0.5)
+```
+
+#### For (LL CSA ~ body mass)
+
+```{r}
+model<-c("BM", "OUrandomRoot", "OUfixedRoot", "lambda", "kappa", "delta", "EB")
+LLCSAmodel<-list()
+for (i in 1:length(model)) {
+  LLCSAmodel[[i]]<-phylolm(LL_CSA~Bodymass, logdata, tree, model=paste(model[[i]]))
+}
+mod2<-modSel.phylolm(LLCSAmodel[[1]], LLCSAmodel[[2]], LLCSAmodel[[3]],
+                     LLCSAmodel[[4]], LLCSAmodel[[5]], LLCSAmodel[[6]],
+                     LLCSAmodel[[7]], tree=tree, method="phylolm")
+mod2 # The lambda model shows the best fit
+
+lambdaLLCSA<-LLCSAmodel[[4]]; summary(lambdaLLCSA) 
+```
+Model is highly significant (p < 0.0001), but the pseudo R-squared is fairly low (0.58).
+
+- Same with `ape` (Paradis & Schliep, 2019) and `rr2` (Ives & Li, 2018; Ives, 2019)
+```{r}
+lambdaLLCSA2<-gls(LL_CSA~Bodymass, logdata, 
+               correlation=corPagel(1, phy=tree, form=~1), method="ML")
+summary(lambdaLLCSA2)
+R2_pred(lambdaLLCSA2)
+```
+Pseudo R-squared is fairly high (0.75).
+
+- Let's plot it and check the residuals
+```{r}
+# Plot
+hull2 <- logdata2[-c(21:30),] %>% group_by(Order) %>% 
+  slice(chull(Bodymass, LL_CSA)) # Convex hulls for eufalconimorphs
+
+ggplot(logdata2, aes(Bodymass, LL_CSA, color=Order)) +
+  geom_point(size=5) +
+  # geom_text(aes(label=Species),hjust=-0.1, vjust=0.4) +
+  xlab("ln body mass (g)") +
+  ylab("ln LL CSA (µm^2)") +
+  geom_abline(intercept=lambdaLLCSA$coefficients[1],
+              slope=lambdaLLCSA$coefficients[2], linewidth=1.3) +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=17)) +
+  scale_colour_brewer("Order", palette="Set1") +
+  aes(fill=Order) +
+  geom_polygon(data=hull2, alpha=0.5)
+
+# Normality test
+shapiro.test(chol(solve(vcv(tree)))%*%lambdaLLCSA2$residuals) # non normal
+
+# Checking the residuals
+res<-residuals(lambdaLLCSA2, type="n")
+plot(lambdaLLCSA2, resid(., type="n")~fitted(.), 
+     main="Normalized Residuals v Fitted Values",abline=c(0,0))
+qqnorm(res); qqline(res)
+
+# New PGLS without the ostrich
+## With ape
+lambdaLLCSA2new<-gls(LL_CSA~Bodymass, logdata2new, 
+                 correlation=corPagel(1, phy=treenew, form=~1), method="ML") 
+summary(lambdaLLCSA2new)
+R2_pred(lambdaLLCSA2new) # Slightly lower, but still ok
+## With phylolm
+lambdaLLCSAnew<-phylolm(LL_CSA~Bodymass, logdata2new, treenew, model="lambda")
+summary(lambdaLLCSAnew) # Higher p-value, but still highly significant
+
+shapiro.test(chol(solve(vcv(treenew)))%*%residuals(lambdaLLCSAnew)) # Still not normal
+resnew<-resid(lambdaLLCSA2new, type="n")
+plot(lambdaLLCSA2new, resid(., type="n")~fitted(.), main="Normalized Residuals v Fitted Values",abline=c(0,0)) # Looks better
+qqnorm(resnew); qqline(resnew) # Still not ideal
+
+# Plot
+ggplot(logdata2new, aes(Bodymass, LL_CSA, color=Order)) +
+  geom_point(size=5) +
+  # geom_text(aes(label=Species),hjust=-0.1, vjust=0.4) +
+  xlab("ln body mass (g)") +
+  ylab("ln labia length (µm)") +
+  geom_abline(intercept=lambdaLLCSA2new$coefficients[1],
+              slope=lambdaLLCSA2new$coefficients[2], linewidth=1.3) +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=17)) +
+  scale_colour_brewer("Order", palette="Set1") +
+  aes(fill=Order) +
+  geom_polygon(data=hull2, alpha=0.5)
+```
+
+#### For (TER ~ body mass)
+
+```{r}
+model<-c("BM", "OUrandomRoot", "OUfixedRoot", "lambda", "kappa", "delta", "EB")
+TERmodel<-list()
+for (i in 1:length(model)) {
+  TERmodel[[i]]<-phylolm(TER~Bodymass, logdata, tree, model=paste(model[[i]]))
+}
+mod2<-modSel.phylolm(TERmodel[[1]], TERmodel[[2]], TERmodel[[3]], TERmodel[[4]], TERmodel[[5]], 
+               TERmodel[[6]], TERmodel[[7]], tree=tree, method="phylolm")
+mod2 # The lambda model shows the best fit
+
+lambdaTER<-TERmodel[[4]]; summary(lambdaTER)
+```
+The model is significant (p = 0.02), but the pseudo R-squared is very low (0.13).
+
+- Same with `ape` (Paradis & Schliep, 2019) and `rr2` (Ives & Li, 2018; Ives, 2019)
+```{r}
+lambdaTER2<-gls(TER~Bodymass, logdata, 
+               correlation=corPagel(0.5, phy=tree, form=~1), method="ML")
+summary(lambdaTER2)
+R2_pred(lambdaTER2)
+```
+Still very low (0.3)!
+
+- Let's plot it and check the residuals
+```{r}
+# Plot
+hull3 <- logdata2[-c(21:30),] %>% group_by(Order) %>% 
+  slice(chull(Bodymass, TER)) # Convex hulls for eufalconimorphs
+
+ggplot(logdata2, aes(Bodymass, TER, color=Order)) +
+  geom_point(size=5) +
+  # geom_text(aes(label=Species),hjust=-0.1, vjust=0.4) +
+  xlab("ln body mass (g)") +
+  ylab("ln TER") +
+  geom_abline(intercept=lambdaTER2$coefficients[1],
+              slope=lambdaTER2$coefficients[2], linewidth=1.3) +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=17)) +
+  scale_colour_brewer("Order", palette="Set1") +
+  aes(fill=Order) +
+  geom_polygon(data=hull3, alpha=0.5)
+
+# Normality test
+shapiro.test(chol(solve(vcv(tree)))%*%lambdaTER2$residuals) # non normal
+
+# Checking the residuals
+res<-residuals(lambdaTER2, type="n")
+plot(lambdaTER2, resid(., type="n")~fitted(.), 
+     main="Normalized Residuals v Fitted Values",abline=c(0,0))
+qqnorm(res); qqline(res)
+
+# New PGLS without S. camelus, O. chimborazo, A. viridigenalis, and P. holochlorus 2 (all outliers!)
+logdata3<-logdata2[-c(14,24,30,35),]
+tree3<-drop.tip(tree, setdiff(tree$tip.label, logdata3$Species))
+## With ape
+lambdaTER2new<-gls(TER~Bodymass, logdata3, 
+                 correlation=corPagel(0.3, phy=tree3, form=~1), method="ML") 
+summary(lambdaTER2new)
+R2_pred(lambdaTER2new) # Negative: terrible signal! Not structured phylogenetically
+## With phylolm
+lambdaTERnew<-phylolm(TER~Bodymass, logdata3, tree3, model="lambda")
+summary(lambdaTERnew) # Not significant, very low pseudo R2 – as expected
+
+shapiro.test(chol(solve(vcv(tree3)))%*%residuals(lambdaTERnew)) # Still not normal
+resnew<-resid(lambdaTER2new, type="n")
+plot(lambdaTER2new, resid(., type="n")~fitted(.), main="Normalized Residuals v Fitted Values",abline=c(0,0)) # Looks better
+qqnorm(resnew); qqline(resnew) # Still not ideal
+
+# Plot
+hull4 <- logdata3[-c(20:27),] %>% group_by(Order) %>% 
+  slice(chull(Bodymass, TER)) # New convex hulls for eufalconimorphs
+
+ggplot(logdata3, aes(Bodymass, TER, color=Order)) +
+  geom_point(size=5) +
+  # geom_text(aes(label=Species),hjust=-0.1, vjust=0.4) +
+  xlab("ln body mass (g)") +
+  ylab("ln TER") +
+  geom_abline(intercept=lambdaTERnew$coefficients[1],
+              slope=lambdaTERnew$coefficients[2], linewidth=1.3) +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=17)) +
+  scale_colour_brewer("Order", palette="Set1") +
+  aes(fill=Order) +
+  geom_polygon(data=hull4, alpha=0.5)
+```
+
+#### For (ST CSA ~ body mass)
+
+```{r}
+model<-c("BM", "OUrandomRoot", "OUfixedRoot", "lambda", "kappa", "delta", "EB")
+
+logdataST<-logdata[-24,]; treeST<-drop.tip(tree, setdiff(tree$tip.label, logdataST$Species))
+STCSAmodel<-list()
+for (i in 1:length(model)) {
+  STCSAmodel[[i]]<-phylolm(ST_CSA~Bodymass, logdataST, treeST, model=paste(model[[i]]))
+}
+mod2<-modSel.phylolm(STCSAmodel[[1]], STCSAmodel[[2]], STCSAmodel[[3]], STCSAmodel[[4]], STCSAmodel[[5]], 
+               STCSAmodel[[6]], STCSAmodel[[7]], tree=tree, method="phylolm")
+mod2 # The kappa model shows the best fit
+
+OUrSTCSA<-STCSAmodel[[5]]; summary(OUrSTCSA)
+```
+The model is highly significant (p < 0.001) and the pseudo R-squared is high (0.71)!
+
+- Same with `ape` (Paradis & Schliep, 2019) and `rr2` (Ives & Li, 2018; Ives, 2019), to compare
+```{r}
+OUrSTCSA2<-gls(ST_CSA~Bodymass, logdataST, 
+               correlation=corMartins(0.1, phy=treeST, form=~1), method="ML")
+summary(OUrSTCSA2)
+R2_pred(OUrSTCSA2)
+```
+Even higher (0.8).
+
+- Let's plot it and check the residuals
+```{r}
+# Plot
+hull5 <- logdataST[-c(21:29),] %>% group_by(Order) %>% 
+  slice(chull(Bodymass, ST_CSA)) # Convex hulls for eufalconimorphs
+
+ggplot(logdata2, aes(Bodymass, ST_CSA, color=Order)) +
+  geom_point(size=5) +
+  # geom_text(aes(label=Species),hjust=-0.1, vjust=0.4) +
+  xlab("ln body mass (g)") +
+  ylab("ln ST CSA (µm^2)") +
+  geom_abline(intercept=OUrSTCSA$coefficients[1],
+              slope=OUrSTCSA$coefficients[2], linewidth=1.3) +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=17)) +
+  scale_colour_brewer("Order", palette="Set1") +
+  aes(fill=Order) +
+  geom_polygon(data=hull5, alpha=0.5)
+
+# Normality test
+shapiro.test(chol(solve(vcv(treeST)))%*%OUrSTCSA2$residuals) # non normal
+
+# Checking the residuals
+res<-residuals(OUrSTCSA2, type="n")
+plot(OUrSTCSA2, resid(., type="n")~fitted(.), 
+     main="Normalized Residuals v Fitted Values",abline=c(0,0))
+qqnorm(res); qqline(res)
+
+# New PGLS without the ostrich
+logdataSTnew<-logdataST[-29,]; logdataSTnew$Order<-logdata2$Order[-c(24,30)]
+treeSTnew<-drop.tip(treeST, setdiff(treeST$tip.label, logdataSTnew$Species))
+## With ape
+OUrSTCSA2new<-gls(ST_CSA~Bodymass, logdataSTnew, 
+                 correlation=corMartins(0.1, phy=treeSTnew, form=~1), method="ML") 
+summary(OUrSTCSA2new)
+R2_pred(OUrSTCSA2new) # Slightly lower (0.75), but still ok
+## With phylolm
+OUrSTCSAnew<-phylolm(ST_CSA~Bodymass, logdataSTnew, treeSTnew, model="lambda")
+summary(OUrSTCSAnew) # Higher p-value, but still highly significant
+
+shapiro.test(chol(solve(vcv(treeSTnew)))%*%residuals(OUrSTCSAnew)) # Still not normal
+
+resnew<-resid(OUrSTCSA2new, type="n")
+plot(OUrSTCSA2new, resid(., type="n")~fitted(.), main="Normalized Residuals v Fitted Values",abline=c(0,0)) # Looks better
+qqnorm(resnew); qqline(resnew) # Looks better
+
+# Plot
+ggplot(logdataSTnew, aes(Bodymass, ST_CSA, color=Order)) +
+  geom_point(size=5) +
+  # geom_text(aes(label=Species),hjust=-0.1, vjust=0.4) +
+  xlab("ln body mass (g)") +
+  ylab("ln ST CSA (µm^2)") +
+  geom_abline(intercept=OUrSTCSA2new$coefficients[1],
+              slope=OUrSTCSA2new$coefficients[2], linewidth=1.3) +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=17)) +
+  scale_colour_brewer("Order", palette="Set1") +
+  aes(fill=Order) +
+  geom_polygon(data=hull5, alpha=0.5)
+```
+Passerines are mostly on the lower end of the plot for both ST CSA and body mass; congruent with ASR and OU shifts for individual traits.
+
+#### Same for eufalconimorphs only
+
+- For (labia length ~ body mass)
+```{r}
+LLmodelE<-list()
+for (i in 1:length(model)) {
+  LLmodelE[[i]]<-phylolm(LL~Bodymass, eufalc, eufalctree, model=paste(model[[i]]))
+}
+mod3<-modSel.phylolm(LLmodelE[[1]], LLmodelE[[2]], LLmodelE[[3]], LLmodelE[[4]], LLmodelE[[5]], 
+               LLmodelE[[6]], LLmodelE[[7]], tree=eufalctree, method="phylolm")
+mod3 # The lambda model shows the best fit
+
+lambdaLLE<-LLmodelE[[4]]; summary(lambdaLLE) # Significant, but low pseudo R-squared (0.23; as expected)
+
+## Same with ape and rr2
+lambdaLLE2<-gls(LL~Bodymass, eufalc, 
+               correlation=corPagel(1, phy=eufalctree, form=~1), method="ML")
+summary(lambdaLLE2)
+R2_pred(lambdaLLE2) # Lower, but still ok (0.64)
+
+# Plot
+hull <- eufalc %>% group_by(Order) %>% 
+  slice(chull(Bodymass, LL)) # Convex hulls for eufalconimorphs
+
+ggplot(eufalc, aes(Bodymass, LL, color=Order)) +
+  geom_point(size=5) +
+  # geom_text(aes(label=Species),hjust=-0.1, vjust=0.4) +
+  xlab("ln body mass (g)") +
+  ylab("ln labia length (µm)") +
+  geom_abline(intercept=lambdaLLE$coefficients[1], slope=lambdaLLE$coefficients[2],
+              linewidth=1.3) +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=17)) +
+  scale_colour_brewer("Order", palette="Set1") +
+  aes(fill=Order) +
+  geom_polygon(data=hull, alpha=0.5)
+
+# Normality test
+shapiro.test(chol(solve(vcv(eufalctree)))%*%lambdaLLE$residuals) # non normal
+
+# Checking the residuals
+res<-residuals(lambdaLLE2, type="n")
+plot(lambdaLLE2, resid(., type="n")~fitted(.),
+     main="Normalized Residuals v Fitted Values",abline=c(0,0)) # Looks good
+qqnorm(res); qqline(res) # Looks good
+```
+
+- For (LL CSA ~ body mass)
+```{r}
+LLCSAmodelE<-list()
+for (i in 1:length(model)) {
+  LLCSAmodelE[[i]]<-phylolm(LL_CSA~Bodymass, eufalc, eufalctree, model=paste(model[[i]]))
+}
+mod3<-modSel.phylolm(LLCSAmodelE[[1]], LLCSAmodelE[[2]], LLCSAmodelE[[3]], LLCSAmodelE[[4]], LLCSAmodelE[[5]], 
+               LLCSAmodelE[[6]], LLCSAmodelE[[7]], tree=eufalctree, method="phylolm")
+mod3 # The lambda model shows the best fit
+
+lambdaLLCSAE<-LLCSAmodelE[[4]]; summary(lambdaLLCSAE) # Significant, but low pseudo R-squared (0.36; as expected)
+
+## Same with ape and rr2
+lambdaLLCSAE2<-gls(LL_CSA~Bodymass, eufalc, 
+               correlation=corPagel(1, phy=eufalctree, form=~1), method="ML")
+summary(lambdaLLCSAE2)
+R2_pred(lambdaLLCSAE2) # Still ok (0.6)
+
+# Plot
+hull2 <- eufalc %>% group_by(Order) %>% 
+  slice(chull(Bodymass, LL_CSA)) # Convex hulls for eufalconimorphs
+
+ggplot(eufalc, aes(Bodymass, LL_CSA, color=Order)) +
+  geom_point(size=5) +
+  # geom_text(aes(label=Species),hjust=-0.1, vjust=0.4) +
+  xlab("ln body mass (g)") +
+  ylab("ln LL CSA (µm^2)") +
+  geom_abline(intercept=lambdaLLCSAE$coefficients[1],
+              slope=lambdaLLCSAE$coefficients[2], linewidth=1.3) +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=17)) +
+  scale_colour_brewer("Order", palette="Set1") +
+  aes(fill=Order) +
+  geom_polygon(data=hull2, alpha=0.5)
+
+# Normality test
+shapiro.test(chol(solve(vcv(eufalctree)))%*%lambdaLLCSAE2$residuals) # non normal
+
+# Checking the residuals
+res<-residuals(lambdaLLCSAE2, type="n")
+plot(lambdaLLCSAE2, resid(., type="n")~fitted(.), 
+     main="Normalized Residuals v Fitted Values",abline=c(0,0)) # Looks good
+qqnorm(res); qqline(res) # Looks good
+```
+
+- For (TER ~ body mass)
+```{r}
+TERmodelE<-list()
+for (i in 1:length(model)) {
+  TERmodelE[[i]]<-phylolm(TER~Bodymass, eufalc, eufalctree, model=paste(model[[i]]))
+}
+mod3<-modSel.phylolm(TERmodelE[[1]], TERmodelE[[2]], TERmodelE[[3]], TERmodelE[[4]], TERmodelE[[5]], 
+               TERmodelE[[6]], TERmodelE[[7]], tree=eufalctree, method="phylolm")
+mod3 # The lambda model shows the best fit
+
+lambdaTERE<-TERmodelE[[4]]; summary(lambdaTERE) # Not significant, low pseudo R-squared (0.04; as expected)
+
+## Same with ape and rr2
+lambdaTERE2<-gls(TER~Bodymass, eufalc, 
+               correlation=corPagel(1, phy=eufalctree, form=~1), method="ML")
+summary(lambdaTERE2)
+R2_pred(lambdaTERE2) # Slightly higher, still very low (0.12)
+
+# Plot
+hull3 <- eufalc %>% group_by(Order) %>% 
+  slice(chull(Bodymass, TER)) # Convex hulls for eufalconimorphs
+
+ggplot(eufalc, aes(Bodymass, TER, color=Order)) +
+  geom_point(size=5) +
+  # geom_text(aes(label=Species),hjust=-0.1, vjust=0.4) +
+  xlab("ln body mass (g)") +
+  ylab("ln labia length (µm)") +
+  geom_abline(intercept=lambdaTERE$coefficients[1], slope=lambdaTERE$coefficients[2],
+              linewidth=1.3) +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=17)) +
+  scale_colour_brewer("Order", palette="Set1") +
+  aes(fill=Order) +
+  geom_polygon(data=hull3, alpha=0.5)
+
+# Normality test
+shapiro.test(chol(solve(vcv(eufalctree)))%*%lambdaTERE$residuals) # non normal
+
+# Checking the residuals
+res<-residuals(lambdaTERE2, type="n")
+plot(lambdaTERE2, resid(., type="n")~fitted(.),
+     main="Normalized Residuals v Fitted Values",abline=c(0,0)) # Some outliers
+qqnorm(res); qqline(res) # Extreme values are off
+```
+
+- For (ST CSA ~ body mass)
+```{r}
+STCSAmodelE<-list()
+for (i in 1:length(model)) {
+  STCSAmodelE[[i]]<-phylolm(ST_CSA~Bodymass, eufalc, eufalctree,
+                            model=paste(model[[i]]))
+}
+mod3<-modSel.phylolm(STCSAmodelE[[1]], STCSAmodelE[[2]], STCSAmodelE[[3]], STCSAmodelE[[4]], STCSAmodelE[[5]], 
+               STCSAmodelE[[6]], STCSAmodelE[[7]], tree=eufalctree, method="phylolm")
+mod3 # Both OU models show the best fit (same AICc value)
+
+#Let's do some model averaging:
+STCSAavg<-model.avg(list(STCSAmodelE[[2]], STCSAmodelE[[3]]))
+summary(STCSAavg) # Highly significant, high pseudo R-squared (0.75)
+
+## Same with ape and rr2
+STCSAE2<-gls(ST_CSA~Bodymass, eufalc, 
+               correlation=corMartins(0.1, phy=eufalctree, form=~1), method="ML")
+summary(STCSAE2)
+R2_pred(STCSAE2) # Higher (0.83)
+
+# Plot
+hull6 <- eufalc %>% group_by(Order) %>% 
+  slice(chull(Bodymass, ST_CSA)) # Convex hulls for eufalconimorphs
+
+ggplot(eufalc, aes(Bodymass, ST_CSA, color=Order)) +
+  geom_point(size=5) +
+  # geom_text(aes(label=Species),hjust=-0.1, vjust=0.4) +
+  xlab("ln body mass (g)") +
+  ylab("ln ST CSA (µm^2)") +
+  geom_abline(intercept=STCSAavg$coefficients[1],
+              slope=STCSAavg$coefficients[3], linewidth=1.3) +
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=17)) +
+  scale_colour_brewer("Order", palette="Set1") +
+  aes(fill=Order) +
+  geom_polygon(data=hull6, alpha=0.5)
+
+# Normality test
+shapiro.test(chol(solve(vcv(eufalctree)))%*%STCSAE2$residuals) # non normal
+
+# Checking the residuals
+res<-residuals(STCSAE2, type="n")
+plot(STCSAE2, resid(., type="n")~fitted(.), 
+     main="Normalized Residuals v Fitted Values",abline=c(0,0)) # Looks good
+qqnorm(res); qqline(res) # Not ideal, but not surprising
+```
+
+## Ancestral state reconstructions (ASR) for intrinsic muscles in Eufalconimorphs
+
+Using data from our sample and the literature to reconstruct ASR with SIMMAP (Huelsenbeck & Bollback, 2003; Bollback, 2006; Revell, 2013) in `phytools`.
+
+-   Data
+```{r, warning=FALSE}
+datasub<-read_excel("ASR_IM.xlsx")
+rownames(datasub)<-datasub$Species
+```
+
+-   Tree
+```{r}
+treemcT<-read.nexus("summary_dated_clements.nex")
+
+setdiff(datasub$Species, treemcT$tip.label) # Check for discrepancies between taxa names in our data set and in the tree
+
+specmcT<-data.frame(treemcT$tip.label) # to look for synonyms directly
+treemcT$tip.label[2191]<-"Tychaedon_barbata"
+treemcT$tip.label[3024]<-"Paradoxornis_unicolor"
+treemcT$tip.label[3025]<-"Paradoxornis_gularis"
+treemcT$tip.label[3376]<-"Ptyonoprogne_obsoleta"
+treemcT$tip.label[4787]<-"Ceblepyris_pectoralis"
+treemcT$tip.label[6207]<-"Tyranniscus_nigrocapillus"
+treemcT$tip.label[6506]<-"Chiroxiphia_galeata"
+treemcT$tip.label[7171]<-"Astur_cooperii"
+
+setdiff(datasub$Species, treemcT$tip.label) # Perfect match
+
+treesub<-drop.tip(treemcT, setdiff(treemcT$tip.label, datasub$Species))
+plotTree(treesub, fsize=0.2, lwd=1, type="fan", ftype="i", part=0.99)
+```
+
+-   ASR using stochastic character mapping (SIMMAP): first, let's use a 5-state trait for the number of pairs of intrinsic muscles (0 to 4).
+```{r}
+# Color palette
+cols<-setNames(c("gold2", "#4DAF4AFF", "#E41A1CFF", "dodgerblue2", "#984EA3FF"), c(0, 1, 2, 3, 4))
+
+x<-datasub$IM; names(x)<-datasub$Species; fac<-as.factor(x)
+
+# Functions for Akaike weights
+aic<-function(logL,k) 2*k-2*logL
+aic.w<-function(aic){
+    d.aic<-aic-min(aic)
+    exp(-1/2*d.aic)/sum(exp(-1/2*d.aic))
+}
+
+# Build the models
+logL<-sapply(c("ER","SYM","ARD"),
+    function(model,tree,x) make.simmap(tree,x,model)$logL,
+    tree=treesub,x=x)
+logL
+
+AIC<-mapply(aic,logL,c(1,3,6))
+AIC
+AIC.W<-aic.w(AIC)
+AIC.W
+
+nsim<-1000
+Nsim<-round(nsim*AIC.W)
+d<-if(sum(Nsim)>nsim) -1 else 1
+nsim<-Nsim+d*sample(c(rep(1,abs(nsim-sum(Nsim))),
+    rep(0,length(Nsim)-abs(nsim-sum(Nsim)))))
+nsim
+
+# Extract the weights and compile SIMMAP ASR for each model
+#o1<-make.simmap(treesub,x,model="ER",nsim=nsim[1])
+#o2<-make.simmap(treesub,x,model="SYM",nsim=nsim[2])
+#o3<-make.simmap(treesub,x,model="ARD",nsim=nsim[3])
+#treesstudy<-c(o1,o2,o3)
+treesstudy1<-make.simmap(treesub,x,model="ARD",nsim=nsim[3])
+
+objstudy1<-describe.simmap(treesstudy1)
+
+# Plot the tree (to be executed all at once)
+plot(treesstudy1[[1]], cols, type="fan", ftype="off", lwd=1, part=0.99)
+obj<-get("last_plot.phylo", envir=.PlotPhyloEnv)
+n<-Ntip(treesub)
+par(lend=3)
+for(i in 1:Ntip(treesub)){
+    cc<-if(obj$xx[i]>0) 5 else -5
+    th<-atan(obj$yy[i]/obj$xx[i])
+    segments(obj$xx[i],obj$yy[i],
+        obj$xx[i]+cc*cos(th),
+        obj$yy[i]+cc*sin(th),lwd=4,
+        col=cols[fac[treesub$tip.label[i]]])
+}
+legend("topleft",legend=levels(fac),
+    pch=15,col=cols,
+    pt.cex=1.5,cex=0.8,bty="n")
+
+# Same with posterior probabilities (pp) at nodes, with larger pie charts for pp ≤ 0.95
+pp<-summary(treesstudy1)$ace[1:treesub$Nnode,]
+plot(treesstudy1[[1]], cols, type="fan", ftype="off", lwd=1,
+     ylim=max(nodeHeights(treesub))*c(-1,1.1))
+obj<-get("last_plot.phylo",envir=.PlotPhyloEnv)
+n<-Ntip(treesub)
+par(lend=3)
+for(i in 1:Ntip(treesub)){
+    cc<-if(obj$xx[i]>0) 5 else -5
+    th<-atan(obj$yy[i]/obj$xx[i])
+    segments(obj$xx[i],obj$yy[i],
+        obj$xx[i]+cc*cos(th),
+        obj$yy[i]+cc*sin(th),lwd=4,
+        col=cols[fac[treesub$tip.label[i]]])
+}
+h<-max(nodeHeights(treesub))
+ii<-order(rowSums(pp^2),decreasing=TRUE)
+for(i in ii){
+    plotrix::floating.pie(obj$xx[i+Ntip(treesub)],
+        obj$yy[i+Ntip(treesub)],
+        radius=if(max(pp[i,])<=0.95) 0.03*h else 0.01*h,
+        x=pp[i,],col=cols,border="transparent")
+}
+legend(x=0.98*par()$usr[1],y=0.9*par()$usr[4],
+    levels(fac),pch=16,col=cols,
+    pt.cex=2,bty="n",cex=0.8)
+```
+
+-   Same with a binary trait (presence/absence of intrinsic muscles)
+```{r}
+# Color palette
+cols<-setNames(c("royalblue","red3"), c(0, 1))
+
+binaryIM<-datasub$IM; names(binaryIM)<-datasub$Species
+binaryIM[which(binaryIM>=2)]<-1
+x<-binaryIM; fac<-as.factor(x)
+
+# Build the models
+logL<-sapply(c("ER","SYM","ARD"),
+    function(model,tree,x) make.simmap(tree,x,model)$logL,
+    tree=treesub,x=x)
+logL
+
+AIC<-mapply(aic,logL,c(1,3,6))
+AIC
+AIC.W<-aic.w(AIC)
+AIC.W
+
+nsim<-1000
+Nsim<-round(nsim*AIC.W)
+d<-if(sum(Nsim)>nsim) -1 else 1
+nsim<-Nsim+d*sample(c(rep(1,abs(nsim-sum(Nsim))),
+    rep(0,length(Nsim)-abs(nsim-sum(Nsim)))))
+nsim
+
+# Extract the weights and compile SIMMAP ASR for each model
+o1<-make.simmap(treesub,x,model="ER",nsim=nsim[1])
+o2<-make.simmap(treesub,x,model="SYM",nsim=nsim[2])
+o3<-make.simmap(treesub,x,model="ARD",nsim=nsim[3])
+treesstudy<-c(o1,o2,o3)
+
+objstudy<-describe.simmap(treesstudy)
+
+# Plot the tree as a density map with posterior probabilities (pp) at nodes, with larger pie charts for pp ≤ 0.95
+dMap<-setMap(densityMap(treesstudy,plot=FALSE), cols)
+pp<-summary(treesstudy)$ace[1:treesub$Nnode,]
+plot(dMap, type="fan", ftype="off", lwd=1, legend=FALSE, part=0.99, 
+     ylim=max(nodeHeights(treesub))*c(-1,1.1))
+obj<-get("last_plot.phylo",envir=.PlotPhyloEnv)
+n<-Ntip(treesub)
+par(lend=3)
+for(i in 1:Ntip(treesub)){
+    cc<-if(obj$xx[i]>0) 5 else -5
+    th<-atan(obj$yy[i]/obj$xx[i])
+    segments(obj$xx[i],obj$yy[i],
+        obj$xx[i]+cc*cos(th),
+        obj$yy[i]+cc*sin(th),lwd=4,
+        col=cols[fac[treesub$tip.label[i]]])
+}
+add.color.bar(max(nodeHeights(treesub)),dMap$cols,
+    prompt=FALSE,lwd=6,outline=FALSE,x=0.95*par()$usr[1],
+    y=0.9*par()$usr[4],subtitle="",fsize=0.8)
+h<-max(nodeHeights(treesub))
+ii<-order(rowSums(pp^2),decreasing=TRUE)
+for(i in ii){
+    plotrix::floating.pie(obj$xx[i+Ntip(treesub)],
+        obj$yy[i+Ntip(treesub)],
+        radius=if(max(pp[i,])<=0.95) 0.03*h else 0.01*h,
+        x=pp[i,],col=cols,border="transparent")
+}
+legend(x=0.98*par()$usr[1],y=0.9*par()$usr[4],
+    levels(fac),pch=16,col=cols,
+    pt.cex=2,bty="n",cex=0.8)
+```
+
+Unlike the 5-state trait, some ancestral states for this binary trait, especially within suboscines, are ambiguous; let's look at the nodes more closely.
+
+- Extract values for pie charts at the nodes for the binary trait
+```{r}
+# Visualize the nodes in the tree
+ggtree(treesub) + 
+  geom_text2(aes(subset=!isTip, label=node), hjust=-.3) +
+  geom_tiplab()
+
+# Check posterior probabilities of ancestral states
+ASRbinary<-as.data.frame(cbind(rownames(objstudy$ace), objstudy$ace))
+ASRbinary[,1:3]<-as.numeric(unlist(ASRbinary[,1:3]))
+
+## Nodes of interest
+clade<-c("Aves", "Trochilidae", "Telluraves", "Australaves", "Eufalconimorphae", "Falconiformes", "Psittacopasseres", "Psittaciformes", "Passeriformes", "Eupasseres", "Tyranni", "Eurylaimides", "Tyrannides", "Tyrannida",  "Furnariida", "Passeri", "Passeri w/o (Menuroidea)")
+node<-c(1114, 2210, 1118, 1119, 1120, 2179, 1121, 2126, 1122, 1123, 1658, 2094, 1659, 1756, 1660, 1124, 1125)
+
+## Subset in correct order
+ASRbinary<-ASRbinary %>% 
+  slice(order(factor(V1, levels = node))) %>% 
+  filter(V1 %in% node)
+rownames(ASRbinary)<-clade; colnames(ASRbinary)<-c("Node number", "p (0)", "p (1)")
+ASRbinary
+```
+
+- Same for the 5-state trait, just in case
+```{r}
+ASR5<-as.data.frame(cbind(rownames(objstudy1$ace), objstudy1$ace))
+ASR5[,1:6]<-as.numeric(unlist(ASR5[,1:6]))
+
+ASR5<-ASR5 %>% 
+  slice(order(factor(V1, levels = node))) %>% 
+  filter(V1 %in% node)
+ASR5<-signif_df(ASR5)
+colnames(ASR5)<-c("Node number", "p (0)", "p (1)", "p (2)", "p (3)", "p (4)")
+rownames(ASR5)<-cladeBiocManager::install("kebabs")
+ASR5
+```
+
