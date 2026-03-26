@@ -344,11 +344,12 @@ phylanov
 # For ratios
 datanovamass=list(); treenovamass=list(); phylanovmass=list()
 for (i in 5:15) {
-  datanovamass[[i]]<-eufalcmass[,i]; names(datanovamass[[i]])<-rownames(eufalcmass)
+  datanovamass[[i]]<-eufalcmass[,i];names(datanovamass[[i]])<-rownames(eufalcmass)
   datanovamass[[i]]<-na.omit(datanovamass[[i]])
-  treenovamass[[i]]<-drop.tip(tree, setdiff(tree$tip.label, names(datanovamass[[i]])))
-  phylanovmass[[i]]<-phylANOVA(treenovamass[[i]], eufalcmass$Order, datanovamass[[i]],
-                               p.adj="BH")
+  treenovamass[[i]]<-drop.tip(tree, setdiff(tree$tip.label,
+                                            names(datanovamass[[i]])))
+  phylanovmass[[i]]<-phylANOVA(treenovamass[[i]], eufalcmass$Order,
+                               datanovamass[[i]],p.adj="BH")
 }
 phylanovmass
 ```
@@ -410,7 +411,7 @@ for (i in c(5:15)) {
   ew <- rep(1,nEdges)
   ew[eModel[[i]]$shift.configuration] <- 3
   plot(eModel[[i]], cex=0.5, label.offset=0.02, edge.width=ew,
-       main=paste("Shift scores for",colnames(logdata[i]), "/ Body mass", sep=" "))
+      main=paste("Shift scores for",colnames(logdata[i]), "/ Body mass", sep=" "))
 }
 
 ## Print list of shifts for each model and plot the shifts on the tree
