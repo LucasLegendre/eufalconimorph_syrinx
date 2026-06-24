@@ -1,7 +1,7 @@
 ---
 title: "Eufalconimorph_project"
 author: "Lucas Legendre"
-date: "`r Sys.Date()`"
+date: `r Sys.Date()`
 output:  
   html_document:
      toc: true
@@ -11,23 +11,28 @@ output:
      df_print: paged
 editor_options: 
   chunk_output_type: inline
+  markdown: 
+    wrap: 72
 ---
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-Compiled under R version 4.5.2 (2025-10-31)
+Compiled under R version 4.6.0 (2026-04-24)
 
 **WARNING**: edit the working directory to your preferred folder.
 
 This document details all analyses performed in R for the study:
-Legendre, L.J., Clarke, J.A. 2026. Diverging trends in the syrinx morphology of songbirds and parrots reflect independent modifications of the ancestral eufalconimorph syrinx. *In prep.*
+
+Legendre, L.J., Clarke, J.A. 2026. The evolution of the eufalconimorph syrinx informed by phylogenetic comparative methods and diceCT imaging of falconiforms, parrots, and passerines. *Zoological Journal of the Linnean Society* **207**:zlag104. <https://doi.org/10.1093/zoolinnean/zlag104>
 
 For more information regarding the study, datasets, and analyses, please refer to the Main Text and Supplementary Information of this paper. If you have any additional questions, feel free to email me at [lucasjlegendre\@gmail.com](mailto:lucasjlegendre@gmail.com){.email}.
 
 All references cited in this script for packages, as well as additional details on my protocol and workflow, are available in the Material and Methods section of this paper.
 
 ### Loading packages
+
 ```{r, message = FALSE}
 library(tidyverse)
 library(ape)
@@ -50,7 +55,8 @@ library(MuMIn)
 
 ## Data and tree
 
--   Data
+- Data
+
 ```{r}
 data<-read.csv("Euf_data.csv", header=TRUE, sep=";")
 
@@ -66,7 +72,8 @@ data[,1]<-species2
 rownames(data)<-data$Species
 ```
 
--   Tree
+- Tree
+
 ```{r, message=FALSE}
 tree<-read.nexus("euf_tree.trees.nex")
 tree$node.label<-NULL
@@ -80,12 +87,14 @@ data<-ReorderData(tree, data)
 
 ## Preliminary analyses
 
--   Log-conversion
+- Log-conversion
+
 ```{r}
 logdata<-cbind(data[,c(1:4)],log(data[,c(5:15)]))
 ```
 
 - Impute missing values with `Rphylopars` (Goolsby et al., 2017)
+
 ```{r, warning=FALSE}
 # Data
 parsdata<-logdata[,c(1,5,6,8,10)]
@@ -103,9 +112,8 @@ rownames(BICdat)<-modelpars; colnames(BICdat)<-"BIC"
 BICdat # The lambda model is the best fit
 ```
 
+- Extract estimates and add them to the dataset (Note: no estimates for measurements of intrinsic muscles – 'NA' in this case refers to non-applicable, rather than missing, values)
 
--   Extract estimates and add them to the dataset
-(Note: no estimates for measurements of intrinsic muscles – 'NA' in this case refers to non-applicable, rather than missing, values)
 ```{r}
 Cdata<-cbind(logdata[,1:4], PPE[[3]]$anc_recon[1:36,1:2], logdata[,7],
             PPE[[3]]$anc_recon[1:36,3], logdata[,9],
@@ -119,7 +127,8 @@ TER<-log(exp(logdata$Tracheal_length)/(exp(logdata$Bronchial_length)+exp(logdata
 logdata<-cbind(logdata[,1:14], TER, logdata[,15]); colnames(logdata)[16]<-"Bodymass"
 ```
 
--   Body mass ratios for all traits
+- Body mass ratios for all traits
+
 ```{r}
 massCdata<-data
 for (i in c(5:15)) {
@@ -153,7 +162,8 @@ massCdata<-Cmdata
 massCdata[24,10]<-NA
 ```
 
--   Phenograms (for all traits)
+- Phenograms (for all traits)
+
 ```{r}
 # For traits
 for (i in 5:ncol(logdata)) {
@@ -190,7 +200,8 @@ for (i in 5:ncol(massCdata)) {
 }
 ```
 
--   Evolutionary model (for all traits) in `geiger` (Pennell et al., 2014)
+- Evolutionary model (for all traits) in `geiger` (Pennell et al., 2014)
+
 ```{r, warning=FALSE}
 ### Phylogenetic signal (Pagel's lambda)
 var=list(); phy=list(); phydat=data.frame()
@@ -219,14 +230,13 @@ for (i in 5:16) {
 }
 mod
 ```
-High phylogenetic signal (lambda ≥ 0.75) for all variables. Phylogenetic signal is significant (p < 0.05) for all of them except SS CSA. 
- 
-Best evolutionary model is: 
-- a lambda model for bronchial length, TL CSA, ST CSA, labia length, LL CSA, and TER;
-- a Brownian Motion (BM) model for tracheal length, tracheal diameter, SP CSA, and body mass;
-- an Ornstein-Uhlenbeck (OU) model for bronchial diameter and SS CSA;
 
--   Same with ratios
+High phylogenetic signal (lambda ≥ 0.75) for all variables. Phylogenetic signal is significant (p \< 0.05) for all of them except SS CSA.
+
+Best evolutionary model is: - a lambda model for bronchial length, TL CSA, ST CSA, labia length, LL CSA, and TER; - a Brownian Motion (BM) model for tracheal length, tracheal diameter, SP CSA, and body mass; - an Ornstein-Uhlenbeck (OU) model for bronchial diameter and SS CSA;
+
+- Same with ratios
+
 ```{r, warning=FALSE}
 var=list(); phy=list(); phydat=data.frame()
 for (i in 5:15) {
@@ -254,13 +264,11 @@ for (i in 5:15) {
 }
 mod
 ```
-Phylogenetic signal is high (lambda ≥ 0.75), except for LL CSA (lambda = 0.64). It is significant (p < 0.05) for all ratios. 
-Best evolutionary model is: 
-- a lambda model for ratios of bronchial length, TL CSA, ST CSA, labia length, and LL CSA; 
-- a BM model for ratios of tracheal length, tracheal diameter, and bronchial diameter; 
-- an OU model for ratios of SS CSA, SP CSA, and TER.
 
--   Ancestral State Reconstruction (using Brownian Motion – a good model for all traits except SS CSA and bronchial diameter) in `phytools` (Revell, 2024)
+Phylogenetic signal is high (lambda ≥ 0.75), except for LL CSA (lambda = 0.64). It is significant (p \< 0.05) for all ratios. Best evolutionary model is: - a lambda model for ratios of bronchial length, TL CSA, ST CSA, labia length, and LL CSA; - a BM model for ratios of tracheal length, tracheal diameter, and bronchial diameter; - an OU model for ratios of SS CSA, SP CSA, and TER.
+
+- Ancestral State Reconstruction (using Brownian Motion – a good model for all traits except SS CSA and bronchial diameter) in `phytools` (Revell, 2024)
+
 ```{r}
 pal<-c("yellow1","orange1","orangered3","purple4")
 dataplot=list(); fit=list(); obj=list()
@@ -275,9 +283,11 @@ for (i in c(5:16)) {
   title(paste('Ancestral state reconstruction for', colnames(logdata)[i]))
 }
 ```
+
 Possible shifts in Passeriformes (tracheal length and diameter, bronchial diameter, TL CSA, ST CSA, SS CSA), in Psittacopasseres (bronchial length), in Passeri (SP CSA), in Psittaciformes (LL CSA), in both Psittacopasseres and Passeriformes (body mass), and in both Passeriformes and Falconinae (labia length). TER does not show any conspicuous pattern.
 
--   Ancestral State Reconstruction for ratios (using Brownian Motion – a good model for all traits except SS CSA, SP CSA, and TER)
+- Ancestral State Reconstruction for ratios (using Brownian Motion – a good model for all traits except SS CSA, SP CSA, and TER)
+
 ```{r}
 dataplot=list(); fit=list(); obj=list()
 for (i in c(5:15)) {
@@ -291,9 +301,11 @@ for (i in c(5:15)) {
   title(paste('Ancestral state reconstruction for', colnames(massCdata)[i], "/ body mass"))
 }
 ```
+
 Less clear than for individual traits; possibles shifts in Passeriformes (tracheal and bronchial length, tracheal and bronchial diameter, TER), Psittacopasseres (TL CSA), both Psittaciformes and Passeriformes (LL CSA), but the pattern is less conspicuous for all ratios. **One shift seems to be very conspicuous**: a higher ratio of labia length for Passeriformes.
 
--   Boxplots by order for all traits
+- Boxplots by order for all traits
+
 ```{r}
 # For individual traits
 ## Subset eufalconimorphs
@@ -327,9 +339,11 @@ for (i in 5:15) {
   ggtitle(paste("Distribution of", colnames(eufalcmass)[i], "/ body mass per order")))
 }
 ```
+
 There seems to be some differences – let's test for it...
 
 - Phylogenetic ANOVA for three orders within Eufalconimorpha
+
 ```{r, warning=FALSE}
 # For individual traits
 datanova=list(); treenova=list(); phylanov=list()
@@ -344,22 +358,23 @@ phylanov
 # For ratios
 datanovamass=list(); treenovamass=list(); phylanovmass=list()
 for (i in 5:15) {
-  datanovamass[[i]]<-eufalcmass[,i];names(datanovamass[[i]])<-rownames(eufalcmass)
+  datanovamass[[i]]<-eufalcmass[,i]; names(datanovamass[[i]])<-rownames(eufalcmass)
   datanovamass[[i]]<-na.omit(datanovamass[[i]])
-  treenovamass[[i]]<-drop.tip(tree, setdiff(tree$tip.label,
-                                            names(datanovamass[[i]])))
-  phylanovmass[[i]]<-phylANOVA(treenovamass[[i]], eufalcmass$Order,
-                               datanovamass[[i]],p.adj="BH")
+  treenovamass[[i]]<-drop.tip(tree, setdiff(tree$tip.label, names(datanovamass[[i]])))
+  phylanovmass[[i]]<-phylANOVA(treenovamass[[i]], eufalcmass$Order, datanovamass[[i]],
+                               p.adj="BH")
 }
 phylanovmass
 ```
+
 None of the variables show any significant differences between orders.
 
 ## Test for shifts in syringeal traits
 
 Using an OU model in `l1ou` (Khabbazian et al., 2016; see also Zhang et al., 2024).
 
--   Analyses performed for all traits at once
+- Analyses performed for all traits at once
+
 ```{r, message=FALSE}
 eModel=list()
 for (i in c(5:16)) {
@@ -387,16 +402,13 @@ for (i in c(5:16)) {
                   eModel[[i]]$shift.configuration))
 }
 ```
+
 We have significant shifts for bronchial length, TL CSA, ST CSA, labia length, LL CSA, SP CSA, and TER. Among these, the shifts for SP CSA and TER are *autapomorphic*.
 
-Other shifts indicate a trend for major clades: 
-- Bronchial length: **significant decrease in Psittacopasseres**
-- TL CSA: **significant decrease in Passeriformes** 
-- ST CSA: **significant decrease in Passeriformes** 
-- Labia length: **significant decrease in Neoaves**, with a **subsequent increase in Pelecaniformes** (*Nannopterum auritum* + *Ardea herodias*) and a **subsequent further decrease in Arinae** (*Psittacara*, *Amazona*, and *Myiopsitta*)
-- LL CSA: **significant decrease in Neoaves** and **subsequent increase in Pelecaniformes** (*Nannopterum auritum* + *Ardea herodias*)
+Other shifts indicate a trend for major clades: - Bronchial length: **significant decrease in Psittacopasseres** - TL CSA: **significant decrease in Passeriformes** - ST CSA: **significant decrease in Passeriformes** - Labia length: **significant decrease in Neoaves**, with a **subsequent increase in Pelecaniformes** (*Nannopterum auritum* + *Ardea herodias*) and a **subsequent further decrease in Arinae** (*Psittacara*, *Amazona*, and *Myiopsitta*) - LL CSA: **significant decrease in Neoaves** and **subsequent increase in Pelecaniformes** (*Nannopterum auritum* + *Ardea herodias*)
 
 - Same with ratios
+
 ```{r, message=FALSE}
 eModel=list()
 for (i in c(5:15)) {
@@ -411,7 +423,7 @@ for (i in c(5:15)) {
   ew <- rep(1,nEdges)
   ew[eModel[[i]]$shift.configuration] <- 3
   plot(eModel[[i]], cex=0.5, label.offset=0.02, edge.width=ew,
-      main=paste("Shift scores for",colnames(logdata[i]), "/ Body mass", sep=" "))
+       main=paste("Shift scores for",colnames(logdata[i]), "/ Body mass", sep=" "))
 }
 
 ## Print list of shifts for each model and plot the shifts on the tree
@@ -423,17 +435,15 @@ for (i in c(5:15)) {
       print(paste(colnames(massCdata)[i], ": ", eModel[[i]]$shift.configuration))
 }
 ```
+
 We have significant shifts for ratios of TL CSA, ST CSA, labia length, LL CSA, SS CSA, and TER. Among these, the shifts for ratios of TL CSA and SS CSA are *autapomorphic*.
 
-Other shifts indicate a trend for major clades:
-- Ratio of ST CSA / body mass: **significant increase in Neoaves** and **subsequent decrease in Gruimorphae**
-- Ratio of labia length / body mass: **significant increase in Passeriformes**
-- Ratio of LL CSA / body mass: **significant increase in Passeriformes**
-- Ratio of TER / body mass: **significant increase in (Passeroidea + Muscicapoidea)**
+Other shifts indicate a trend for major clades: - Ratio of ST CSA / body mass: **significant increase in Neoaves** and **subsequent decrease in Gruimorphae** - Ratio of labia length / body mass: **significant increase in Passeriformes** - Ratio of LL CSA / body mass: **significant increase in Passeriformes** - Ratio of TER / body mass: **significant increase in (Passeroidea + Muscicapoidea)**
 
 We can study this further by exploring multivariate OU shifts with package `PhylogeneticEM` (Bastide et al., 2017, 2018).
 
 - Dimensionality reduction, using phylogenetic PCA in `phytools`
+
 ```{r}
 dataOU<-logdata[-24,-c(1:4,13:14)] # Remove specimen info and traits with missing values
 
@@ -489,9 +499,11 @@ ggplot(BMPC, aes(Body_mass, PC2)) +
         legend.text=element_text(size=15),
         legend.title=element_text(size=17))
 ```
+
 The first two PCs explain 87% of the variance in the original dataset. PC1 is highly correlated to body mass.
 
 - Estimate the shifts in the PCs and visualize them on the tree
+
 ```{r, message =FALSE}
 PCAdatviz<-as.data.frame(t(PCAdat$S[,c(1:2)]))
 
@@ -514,6 +526,7 @@ res
 plot(res) # Shifts on the tree
 plot_criterion(res) # model selection criterion: one shift is the best model
 ```
+
 **One shift** for Passeriformes, similar to what is obtained with TL CSA and ST CSA, and with mass-corrected labia length and LL CSA (also see ASR above).
 
 This is an interesting result, but how does it vary (or not) if we include traits for intrinsic muscles? We did not include them due to NAs for non-Psittacopasseres and *Contopus*.
@@ -521,6 +534,7 @@ This is an interesting result, but how does it vary (or not) if we include trait
 Let's rerun the analysis with all traits, but only for songbirds and parrots:
 
 - Phylogenetic PCA
+
 ```{r}
 dataOUall<-na.omit(logdata[,-c(1:4)]) # Remove specimen info
 treeIM<-drop.tip(tree, setdiff(tree$tip.label, rownames(dataOUall))) # Prune the tree
@@ -534,9 +548,11 @@ PCAvarall
 PCAvarall$PC<-factor(PCAvarall$PC, levels=rownames(PCAvarall)) # Correct order for the PCs
 ggplot(PCAvarall, aes(PC, value)) + geom_bar(stat="identity")
 ```
-The first two PCs explain ~82% of the variance in the original dataset.
+
+The first two PCs explain \~82% of the variance in the original dataset.
 
 - Estimate the shifts in the PCs and visualize them on the tree
+
 ```{r}
 PCAdatallviz<-as.data.frame(t(PCAdatall$S[,c(1:2)]))
 
@@ -557,6 +573,7 @@ resall
 plot(resall) # Shifts on the tree
 plot_criterion(resall) # model selection criterion: no shifts is the best model
 ```
+
 The lack of extra taxa blurs the signal, but it could also be that the IM traits have very little signal as well – a larger sample size for Psittacopasseres might help.
 
 Since there seems to be a major shift in Passeriformes for both labia traits (length and CSA) that this might be related to body mass (significant shifts for ratios), we should investigate the relationship between those traits and body mass a bit further using phylogenetic regressions.
@@ -565,7 +582,7 @@ Since there seems to be a major shift in Passeriformes for both labia traits (le
 
 Phylogenetic generalized least squares in `phylolm` (Ho & Ané, 2014).
 
-#### For (labia length ~ body mass)
+#### For (labia length \~ body mass)
 
 ```{r}
 model<-c("BM", "OUrandomRoot", "OUfixedRoot", "lambda", "kappa", "delta", "EB")
@@ -580,18 +597,22 @@ mod2 # The lambda model shows the best fit
 
 lambdaLL<-LLmodel[[4]]; summary(lambdaLL) 
 ```
-Model is highly significant (p < 0.0001), but the pseudo R-squared is pretty low (0.35).
+
+Model is highly significant (p \< 0.0001), but the pseudo R-squared is pretty low (0.35).
 
 - Same with `ape` (Paradis & Schliep, 2019) and `rr2` (Ives & Li, 2018; Ives, 2019)
+
 ```{r}
 lambdaLL2<-gls(LL~Bodymass, logdata, 
                correlation=corPagel(1, phy=tree, form=~1), method="ML")
 summary(lambdaLL2)
 R2_pred(lambdaLL2)
 ```
+
 Pseudo R-squared is fairly high (0.71).
 
 - Let's plot it and check the residuals
+
 ```{r}
 # Plot
 dupli<-logdata$Order; dupli[21:30]<-"Other"
@@ -662,7 +683,7 @@ ggplot(logdata2new, aes(Bodymass, LL, color=Order)) +
   geom_polygon(data=hull, alpha=0.5)
 ```
 
-#### For (LL CSA ~ body mass)
+#### For (LL CSA \~ body mass)
 
 ```{r}
 model<-c("BM", "OUrandomRoot", "OUfixedRoot", "lambda", "kappa", "delta", "EB")
@@ -677,18 +698,22 @@ mod2 # The lambda model shows the best fit
 
 lambdaLLCSA<-LLCSAmodel[[4]]; summary(lambdaLLCSA) 
 ```
-Model is highly significant (p < 0.0001), but the pseudo R-squared is fairly low (0.58).
+
+Model is highly significant (p \< 0.0001), but the pseudo R-squared is fairly low (0.58).
 
 - Same with `ape` (Paradis & Schliep, 2019) and `rr2` (Ives & Li, 2018; Ives, 2019)
+
 ```{r}
 lambdaLLCSA2<-gls(LL_CSA~Bodymass, logdata, 
                correlation=corPagel(1, phy=tree, form=~1), method="ML")
 summary(lambdaLLCSA2)
 R2_pred(lambdaLLCSA2)
 ```
+
 Pseudo R-squared is fairly high (0.75).
 
 - Let's plot it and check the residuals
+
 ```{r}
 # Plot
 hull2 <- logdata2[-c(21:30),] %>% group_by(Order) %>% 
@@ -750,7 +775,7 @@ ggplot(logdata2new, aes(Bodymass, LL_CSA, color=Order)) +
   geom_polygon(data=hull2, alpha=0.5)
 ```
 
-#### For (TER ~ body mass)
+#### For (TER \~ body mass)
 
 ```{r}
 model<-c("BM", "OUrandomRoot", "OUfixedRoot", "lambda", "kappa", "delta", "EB")
@@ -764,18 +789,22 @@ mod2 # The lambda model shows the best fit
 
 lambdaTER<-TERmodel[[4]]; summary(lambdaTER)
 ```
+
 The model is significant (p = 0.02), but the pseudo R-squared is very low (0.13).
 
 - Same with `ape` (Paradis & Schliep, 2019) and `rr2` (Ives & Li, 2018; Ives, 2019)
+
 ```{r}
 lambdaTER2<-gls(TER~Bodymass, logdata, 
                correlation=corPagel(0.5, phy=tree, form=~1), method="ML")
 summary(lambdaTER2)
 R2_pred(lambdaTER2)
 ```
+
 Still very low (0.3)!
 
 - Let's plot it and check the residuals
+
 ```{r}
 # Plot
 hull3 <- logdata2[-c(21:30),] %>% group_by(Order) %>% 
@@ -842,7 +871,7 @@ ggplot(logdata3, aes(Bodymass, TER, color=Order)) +
   geom_polygon(data=hull4, alpha=0.5)
 ```
 
-#### For (ST CSA ~ body mass)
+#### For (ST CSA \~ body mass)
 
 ```{r}
 model<-c("BM", "OUrandomRoot", "OUfixedRoot", "lambda", "kappa", "delta", "EB")
@@ -858,18 +887,22 @@ mod2 # The kappa model shows the best fit
 
 OUrSTCSA<-STCSAmodel[[5]]; summary(OUrSTCSA)
 ```
-The model is highly significant (p < 0.001) and the pseudo R-squared is high (0.71)!
+
+The model is highly significant (p \< 0.001) and the pseudo R-squared is high (0.71)!
 
 - Same with `ape` (Paradis & Schliep, 2019) and `rr2` (Ives & Li, 2018; Ives, 2019), to compare
+
 ```{r}
 OUrSTCSA2<-gls(ST_CSA~Bodymass, logdataST, 
                correlation=corMartins(0.1, phy=treeST, form=~1), method="ML")
 summary(OUrSTCSA2)
 R2_pred(OUrSTCSA2)
 ```
+
 Even higher (0.8).
 
 - Let's plot it and check the residuals
+
 ```{r}
 # Plot
 hull5 <- logdataST[-c(21:29),] %>% group_by(Order) %>% 
@@ -933,11 +966,13 @@ ggplot(logdataSTnew, aes(Bodymass, ST_CSA, color=Order)) +
   aes(fill=Order) +
   geom_polygon(data=hull5, alpha=0.5)
 ```
+
 Passerines are mostly on the lower end of the plot for both ST CSA and body mass; congruent with ASR and OU shifts for individual traits.
 
 #### Same for eufalconimorphs only
 
-- For (labia length ~ body mass)
+- For (labia length \~ body mass)
+
 ```{r}
 LLmodelE<-list()
 for (i in 1:length(model)) {
@@ -984,7 +1019,8 @@ plot(lambdaLLE2, resid(., type="n")~fitted(.),
 qqnorm(res); qqline(res) # Looks good
 ```
 
-- For (LL CSA ~ body mass)
+- For (LL CSA \~ body mass)
+
 ```{r}
 LLCSAmodelE<-list()
 for (i in 1:length(model)) {
@@ -1031,7 +1067,8 @@ plot(lambdaLLCSAE2, resid(., type="n")~fitted(.),
 qqnorm(res); qqline(res) # Looks good
 ```
 
-- For (TER ~ body mass)
+- For (TER \~ body mass)
+
 ```{r}
 TERmodelE<-list()
 for (i in 1:length(model)) {
@@ -1078,7 +1115,8 @@ plot(lambdaTERE2, resid(., type="n")~fitted(.),
 qqnorm(res); qqline(res) # Extreme values are off
 ```
 
-- For (ST CSA ~ body mass)
+- For (ST CSA \~ body mass)
+
 ```{r}
 STCSAmodelE<-list()
 for (i in 1:length(model)) {
@@ -1132,13 +1170,15 @@ qqnorm(res); qqline(res) # Not ideal, but not surprising
 
 Using data from our sample and the literature to reconstruct ASR with SIMMAP (Huelsenbeck & Bollback, 2003; Bollback, 2006; Revell, 2013) in `phytools`.
 
--   Data
+- Data
+
 ```{r, warning=FALSE}
 datasub<-read_excel("ASR_IM.xlsx")
 rownames(datasub)<-datasub$Species
 ```
 
--   Tree
+- Tree
+
 ```{r}
 treemcT<-read.nexus("summary_dated_clements.nex")
 
@@ -1160,7 +1200,8 @@ treesub<-drop.tip(treemcT, setdiff(treemcT$tip.label, datasub$Species))
 plotTree(treesub, fsize=0.2, lwd=1, type="fan", ftype="i", part=0.99)
 ```
 
--   ASR using stochastic character mapping (SIMMAP): first, let's use a 5-state trait for the number of pairs of intrinsic muscles (0 to 4).
+- ASR using stochastic character mapping (SIMMAP): first, let's use a 5-state trait for the number of pairs of intrinsic muscles (0 to 4).
+
 ```{r}
 # Color palette
 cols<-setNames(c("gold2", "#4DAF4AFF", "#E41A1CFF", "dodgerblue2", "#984EA3FF"), c(0, 1, 2, 3, 4))
@@ -1246,7 +1287,8 @@ legend(x=0.98*par()$usr[1],y=0.9*par()$usr[4],
     pt.cex=2,bty="n",cex=0.8)
 ```
 
--   Same with a binary trait (presence/absence of intrinsic muscles)
+- Same with a binary trait (presence/absence of intrinsic muscles)
+
 ```{r}
 # Color palette
 cols<-setNames(c("royalblue","red3"), c(0, 1))
@@ -1316,6 +1358,7 @@ legend(x=0.98*par()$usr[1],y=0.9*par()$usr[4],
 Unlike the 5-state trait, some ancestral states for this binary trait, especially within suboscines, are ambiguous; let's look at the nodes more closely.
 
 - Extract values for pie charts at the nodes for the binary trait
+
 ```{r}
 # Visualize the nodes in the tree
 ggtree(treesub) + 
@@ -1339,6 +1382,7 @@ ASRbinary
 ```
 
 - Same for the 5-state trait, just in case
+
 ```{r}
 ASR5<-as.data.frame(cbind(rownames(objstudy1$ace), objstudy1$ace))
 ASR5[,1:6]<-as.numeric(unlist(ASR5[,1:6]))
@@ -1351,4 +1395,3 @@ colnames(ASR5)<-c("Node number", "p (0)", "p (1)", "p (2)", "p (3)", "p (4)")
 rownames(ASR5)<-clade
 ASR5
 ```
-
